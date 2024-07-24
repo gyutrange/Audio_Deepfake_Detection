@@ -28,11 +28,10 @@ def create_watermark(data, private_key_file):
         private_key = RSA.import_key(f.read())
     signature = pkcs1_15.new(private_key).sign(hash_obj)
 
-    # 워터마크 이진화
-    watermark = watermark_data + "|" + signature.hex()
-    watermark_bits = ''.join([bin(ord(c)).lstrip('0b').rjust(8, '0') for c in watermark])
+    # 해시 값을 사용하여 16비트로 줄이기
+    short_watermark_bits = bin(int(signature.hex(), 16))[-16:]
     
-    return watermark_bits
+    return short_watermark_bits
 
 # 워터마크 생성 예시 (random값과 키 비교)
 watermark_bits = create_watermark(random.random(), "private.pem")
@@ -55,4 +54,6 @@ def verify_watermark(watermark_data, signature, public_key_file):
         print("The watermark is authentic.")
     except (ValueError, TypeError):
         print("The watermark is not authentic.")
+
+# 필요한 경우, 검증 함수 호출을 위한 추가 코드
 
