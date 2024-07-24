@@ -1,76 +1,70 @@
+import librosa
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Reshape, GRU, Dense, TimeDistributed
-from tensorflow.keras.models import Model
+import os
+
+# 오디오 파일 경로 리스트 준비
+original_file_paths = [...]  # 원본 오디오 파일 경로 리스트
+fake_file_paths = [...]      # 딥페이크 오디오 파일 경로 리스트
+labels = [0] * len(original_file_paths) + [1] * len(fake_file_paths)
+
+# 특징 추출 함수
+def extract_features(file_path, sr=16000):
+    audio, _ = librosa.load(file_path, sr=sr)
+    mel_spectrogram = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=128)
+    log_mel_spectrogram = librosa.power_to_db(mel_spectrogram)
+    return log_mel_spectrogram
+
+# 데이터 로드 및 특징 추출
+def load_data(file_paths, sr=16000):
+    features = []
+    for file_path in file_paths:
+        features.append(extract_features(file_path, sr=sr))
+    return np.array(features)
+
+# 원본 오디오와 딥페이크 오디오의 특징 추출
+original_features = load_data(original_file_paths)
+fake_features = load_data(fake_file_paths)
+
+# 특징과 라벨 결합
+features = np.concatenate((original_features, fake_features), axis=0)
+labels = np.array(labels)
+
+# 데이터셋 분할 (훈련, 검증)
 from sklearn.model_selection import train_test_split
+X_train, X_val, y_train, y_val = train_test_split(features, labels, test_size=0.2, random_state=42)
 
-def load_data():
-    # 데이터를 로드하고 전처리
-    X = np.random.randn(1000, 128, 64, 1)  # 1000개의 샘플, 임의의 데이터
-    y = np.random.randint(0, 10, size=(1000, 128, 10))  # 10개의 클래스, 원-핫 인코딩된 레이블
-    return X, y
+# 데이터 형태 변환 (모델 입력 형태에 맞게)
+X_train = X_train[..., np.newaxis]
+X_val = X_val[..., np.newaxis]
 
-from google.colab import drive
-drive.mount('/content/drive')
+import tensorflow as tf
 
-def add_watermark_to_waveform(waveform, watermark_pattern):
-    pattern_length = len(watermark_pattern)
-    waveform_length = len(waveform)
-    repeated_pattern = np.tile(watermark_pattern, waveform_length // pattern_length + 1)
-    return waveform + repeated_pattern[:waveform_length]
-
-def create_crnn_model(input_shape, num_classes):
-    input_data = Input(name='the_input', shape=input_shape, dtype='float32')
-    inner = Conv2D(32, (3, 3), padding='same', activation='relu')(input_data)
-    inner = MaxPooling2D(pool_size=(2, 2))(inner)
-    inner = Conv2D(64, (3, 3), padding='same', activation='relu')(inner)
-    inner = MaxPooling2D(pool_size=(2, 2))(inner)
-
-    inner_shape = inner.shape  # (batch_size, 32, 16, 64)
-    _, h, w, c = inner_shape
-
-    inner = Reshape(target_shape=(h, w * c))(inner)
-    inner = GRU(128, return_sequences=True)(inner)
-    inner = GRU(128, return_sequences=True)(inner)
-    y_pred = TimeDistributed(Dense(num_classes, activation='softmax'))(inner)
-
-    model = Model(inputs=input_data, outputs=y_pred)
-    model.summary()
+def create_crnn_model(input_shape):
+    model = tf.keras.Sequential()
+    model.add(tf.keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=input_shape))
+    model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    model.add(tf.keras.layers.Conv2D(64, (3, 3), activation='relu'))
+    model.add(tf.keras.layers.MaxPooling2D((2, 2)))
+    model.add(tf.keras.layers.Reshape((input_shape[0] // 4, (input_shape[1] // 4) * 64)))
+    model.add(tf.keras.layers.LSTM(128, return_sequences=True))
+    model.add(tf.keras.layers.LSTM(128))
+    model.add(tf.keras.layers.Dense(64, activation='relu'))
+    model.add(tf.keras.layers.Dense(1, activation='sigmoid'))
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
     return model
 
-# 데이터 로드
-X, y = load_data()
-
-# 데이터셋을 학습용과 검증용으로 분리
-X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# 예제 워터마크 패턴
-watermark_pattern = np.sin(np.linspace(0, 2 * np.pi, 100))
-
-# 학습 데이터에 워터마크 추가
-X_train_watermarked = np.array([add_watermark_to_waveform(x.flatten(), watermark_pattern).reshape(128, 64, 1) for x in X_train])
-
-# 검증 데이터에 워터마크 추가 (필요에 따라 추가)
-X_val_watermarked = np.array([add_watermark_to_waveform(x.flatten(), watermark_pattern).reshape(128, 64, 1) for x in X_val])
-
-# 모델 입력 형태
-input_shape = (128, 64, 1)
-num_classes = 10
-
-# 모델 생성 및 컴파일
-model = create_crnn_model(input_shape, num_classes)
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-
-# y_train과 y_val의 모양 확인하고 필요한 경우 수정
-y_train = np.array(y_train)  # Ensure y_train is a numpy array
-y_val = np.array(y_val)      # Ensure y_val is a numpy array
-
-# y_train과 y_val 모양 자르기 --> Conv2D랑 MaxPooling2D 레이어의 출력 모양 시퀀스 길이 맞춰야해서
-y_train = y_train[:, :32, :]  # (batch_size, 32, num_classes)
-y_val = y_val[:, :32, :]      # (batch_size, 32, num_classes)
-
-print("Shape of y_train:", y_train.shape)  # Check the shape of y_train
-print("Shape of y_val:", y_val.shape)      # Check the shape of y_val
+input_shape = (X_train.shape[1], X_train.shape[2], 1)
+model = create_crnn_model(input_shape)
 
 # 모델 학습
-history = model.fit(X_train_watermarked, y_train, validation_data=(X_val_watermarked, y_val), epochs=2)
+model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=32)
+
+# 모델 평가
+loss, accuracy = model.evaluate(X_val, y_val)
+print(f"Validation Loss: {loss}")
+print(f"Validation Accuracy: {accuracy}")
+
+# 예측
+y_pred = model.predict(X_val)
+y_pred = (y_pred > 0.5).astype(int)  # 이진 분류 결과로 변환
+
