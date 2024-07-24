@@ -57,7 +57,7 @@ input_shape = (X_train.shape[1], X_train.shape[2], 1)
 model = create_crnn_model(input_shape)
 
 # 모델 학습
-model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=10, batch_size=32)
+model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=128, batch_size=30)
 
 # 모델 평가
 loss, accuracy = model.evaluate(X_val, y_val)
