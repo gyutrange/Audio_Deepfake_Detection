@@ -1,6 +1,9 @@
 import librosa
 import numpy as np
 import os
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
 
 # 오디오 파일 경로 리스트 준비
 original_file_paths = [...]  # 원본 오디오 파일 경로 리스트
@@ -30,14 +33,11 @@ features = np.concatenate((original_features, fake_features), axis=0)
 labels = np.array(labels)
 
 # 데이터셋 분할 (훈련, 검증)
-from sklearn.model_selection import train_test_split
 X_train, X_val, y_train, y_val = train_test_split(features, labels, test_size=0.2, random_state=42)
 
 # 데이터 형태 변환 (모델 입력 형태에 맞게)
 X_train = X_train[..., np.newaxis]
 X_val = X_val[..., np.newaxis]
-
-import tensorflow as tf
 
 def create_crnn_model(input_shape):
     model = tf.keras.Sequential()
@@ -68,3 +68,15 @@ print(f"Validation Accuracy: {accuracy}")
 y_pred = model.predict(X_val)
 y_pred = (y_pred > 0.5).astype(int)  # 이진 분류 결과로 변환
 
+# 예측 결과 출력
+if y_pred == 1:
+    print("deepfake")
+else:
+    print("origin")
+
+# 실제 라벨과 비교하여 정확도 계산
+accuracy = accuracy_score(y_val, y_pred)
+print(f"Prediction Accuracy: {accuracy}")
+
+# 모델 저장
+model.save('crnn_model.h5')
