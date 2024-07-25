@@ -1,3 +1,8 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
+import numpy as np
+import scipy.io.wavfile as wav
 from Crypto.PublicKey import RSA
 from Crypto.Signature import pkcs1_15
 from Crypto.Hash import SHA256
@@ -16,44 +21,74 @@ with open("public.pem", "wb") as f:
     f.write(public_key)
 
 def create_watermark(data, private_key_file):
-    # 타임스탬프 추가
     timestamp = int(time.time())
     watermark_data = f"{data}|{timestamp}"
 
-    # 해시 생성
     hash_obj = SHA256.new(watermark_data.encode('utf-8'))
 
-    # RSA 서명
     with open(private_key_file, "rb") as f:
         private_key = RSA.import_key(f.read())
     signature = pkcs1_15.new(private_key).sign(hash_obj)
 
-    # 해시 값을 사용하여 16비트로 줄이기
-    short_watermark_bits = bin(int(signature.hex(), 16))[-16:]
-    
-    return short_watermark_bits
+    watermark = watermark_data + "|" + signature.hex()
+    watermark_bits = ''.join([bin(ord(c)).lstrip('0b').rjust(8, '0') for c in watermark])
 
-# 워터마크 생성 예시 (random값과 키 비교)
-watermark_bits = create_watermark(random.random(), "private.pem")
-print(f"Watermark Bits: {watermark_bits}")
+    return watermark_bits
 
-# 워터마크 이진 데이터 저장
-with open("watermark_bits.txt", "w") as f:
-    f.write(watermark_bits)
+def load_watermark_bits(watermark_file):
+    with open(watermark_file, 'r') as f:
+        watermark_bits = f.read()
+    return watermark_bits
 
-def verify_watermark(watermark_data, signature, public_key_file):
-    # 해시 생성
-    hash_obj = SHA256.new(watermark_data.encode('utf-8'))
+def embed_watermark_spread_spectrum(audio_file, output_file, watermark_bits):
+    rate, audio = wav.read(audio_file)
+    audio = audio.astype(np.float32)
 
-    # RSA 서명 검증
-    with open(public_key_file, "rb") as f:
-        public_key = RSA.import_key(f.read())
+    watermark_bits = np.array(list(map(int, watermark_bits)))
 
-    try:
-        pkcs1_15.new(public_key).verify(hash_obj, signature)
-        print("The watermark is authentic.")
-    except (ValueError, TypeError):
-        print("The watermark is not authentic.")
+    np.random.seed(0)
+    spread_sequence = np.random.choice([1, -1], size=(len(watermark_bits), audio.shape[0]))
 
-# 필요한 경우, 검증 함수 호출을 위한 추가 코드
+    for i, bit in enumerate(watermark_bits):
+        if bit == 1:
+            audio += spread_sequence[i]
+
+    audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
+    wav.write(output_file, rate, audio)
+
+def process_files(directory):
+    watermark_bits = create_watermark(random.random(), "private.pem")
+
+    with open("watermark_bits.txt", "w") as f:
+        f.write(watermark_bits)
+
+    watermark_bits = load_watermark_bits('watermark_bits.txt')
+
+    for file_name in os.listdir(directory):
+        if file_name.endswith('.wav'):
+            input_file = os.path.join(directory, file_name)
+            output_file = os.path.join(directory, 'watermarked_' + file_name)
+            embed_watermark_spread_spectrum(input_file, output_file, watermark_bits)
+
+    messagebox.showinfo("Success", "Watermarking completed for all WAV files in the selected directory.")
+
+def select_directory():
+    directory = filedialog.askdirectory()
+    if directory:
+        process_files(directory)
+
+# GUI 설정
+root = tk.Tk()
+root.title("Audio Watermarking")
+
+frame = tk.Frame(root, padx=10, pady=10)
+frame.pack(padx=10, pady=10)
+
+label = tk.Label(frame, text="Select a directory containing WAV files to watermark:")
+label.pack(pady=5)
+
+select_button = tk.Button(frame, text="Select Directory", command=select_directory)
+select_button.pack(pady=5)
+
+root.mainloop()
 
