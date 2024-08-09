@@ -20,6 +20,7 @@ with open("private.pem", "wb") as f:
 with open("public.pem", "wb") as f:
     f.write(public_key)
 
+
 def create_watermark(data, private_key_file):
     timestamp = int(time.time())
     watermark_data = f"{data}|{timestamp}"
@@ -35,10 +36,12 @@ def create_watermark(data, private_key_file):
 
     return watermark_bits
 
+
 def load_watermark_bits(watermark_file):
     with open(watermark_file, 'r') as f:
         watermark_bits = f.read()
     return watermark_bits
+
 
 def embed_watermark_spread_spectrum(audio_file, output_file, watermark_bits):
     rate, audio = wav.read(audio_file)
@@ -46,15 +49,20 @@ def embed_watermark_spread_spectrum(audio_file, output_file, watermark_bits):
 
     watermark_bits = np.array(list(map(int, watermark_bits)))
 
+    # 강도 조절을 위한 시드 조정
     np.random.seed(0)
     spread_sequence = np.random.choice([1, -1], size=(len(watermark_bits), audio.shape[0]))
 
+    # 워터마크 강도 조절 (여기서 조절 가능)
+    watermark_strength = 0.0001
+
     for i, bit in enumerate(watermark_bits):
         if bit == 1:
-            audio += spread_sequence[i]
+            audio += watermark_strength * spread_sequence[i]
 
     audio = np.int16(audio / np.max(np.abs(audio)) * 32767)
     wav.write(output_file, rate, audio)
+
 
 def process_files(directory):
     watermark_bits = create_watermark(random.random(), "private.pem")
@@ -72,10 +80,12 @@ def process_files(directory):
 
     messagebox.showinfo("Success", "Watermarking completed for all WAV files in the selected directory.")
 
+
 def select_directory():
     directory = filedialog.askdirectory()
     if directory:
         process_files(directory)
+
 
 # GUI 설정
 root = tk.Tk()
@@ -91,4 +101,3 @@ select_button = tk.Button(frame, text="Select Directory", command=select_directo
 select_button.pack(pady=5)
 
 root.mainloop()
-

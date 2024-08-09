@@ -5,11 +5,8 @@ import tensorflow as tf
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-from google.colab import drive
-drive.mount('/content/drive')
-
 # 데이터 파일 경로 설정
-base_path = '/content/drive/MyDrive/'
+base_path = './'
 bonafide_path = os.path.join(base_path, 'watermark_bonafide')
 spoof_path = os.path.join(base_path, 'watermark_spoof')
 
@@ -55,6 +52,7 @@ def extract_features(file_path, sr=16000, augment=False):
 def load_data(file_paths, sr=16000, augment=False, fixed_shape=(128, 128)):
     features = []
     for file_path in file_paths:
+        print(file_path)
         extracted_features = extract_features(file_path, sr=sr, augment=augment)
         for feature in extracted_features:
             # 패딩 또는 자르기를 통해 특징 배열을 고정 크기로 만듭니다.
@@ -117,11 +115,15 @@ def create_crnn_model(input_shape):
 input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3])  # (height, width, channels)
 model = create_crnn_model(input_shape)
 
+# EarlyStopping 콜백 추가
+early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+
 # 모델 학습
-model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=30, batch_size=32)
+model.fit(X_train, y_train, validation_data=(X_val, y_val), epochs=50, batch_size=64, callbacks=early_stopping)
+
 
 # 모델 저장
-model.save('./content/drive/crnn_model.h5')
+model.save('./new_model_v3.h5')
 
 # 모델 평가
 loss, accuracy = model.evaluate(X_val, y_val)
