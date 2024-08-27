@@ -4,7 +4,8 @@ from Crypto.PublicKey import RSA
 from Crypto.Signature import pkcs1_15
 from Crypto.Hash import SHA256
 import time
-import os
+import matplotlib.pyplot as plt
+import reedsolo
 
 
 # RSA 키 쌍 생성 및 저장
@@ -62,6 +63,7 @@ def generate_beep(frequency=19000, duration=2, sample_rate=44100):
     beep = 0.0001 * np.sin(2 * np.pi * frequency * t)  # 0.1로 진폭을 줄임 (낮은 음량)
     return np.int16(beep * 32767)
 
+
 # LSB 기법으로 오디오에 디지털 서명 삽입
 def embed_signature_lsb(audio, data_bits, spread_factor=2):
     audio = audio.astype(np.int16)
@@ -69,7 +71,8 @@ def embed_signature_lsb(audio, data_bits, spread_factor=2):
 
     for i in range(num_bits):
         sample_index = i * spread_factor
-        audio[sample_index] = (audio[sample_index] & ~1) | int(data_bits[i])
+        if sample_index < len(audio):
+            audio[sample_index] = (audio[sample_index] & ~1) | int(data_bits[i])
 
     return audio
 
@@ -81,7 +84,10 @@ def extract_signature_lsb(audio, num_bits, spread_factor=2):
 
     for i in range(num_bits):
         sample_index = i * spread_factor
-        extracted_bits += str(audio[sample_index] & 1)
+        if sample_index < len(audio):
+            extracted_bits += str(audio[sample_index] & 1)
+        else:
+            break  # Stop if we exceed the length of the audio array
 
     return extracted_bits
 
@@ -98,7 +104,25 @@ def verify_signature(data, signature, public_key_file):
         return False
 
 
-# 메인 실행 흐름
+def add_noise(audio, noise_level):
+    noise = np.random.normal(0, noise_level, audio.shape)
+    return audio + noise
+
+
+def recover_signature_with_reed_solomon(damaged_bits, original_bits_length, n_data=255, k_data=223):
+    # Reed-Solomon 에러 수정 코드의 n과 k 값 설정
+    rs = reedsolo.RSCodec(n_data - k_data)
+    original_data_bits = damaged_bits[:original_bits_length]
+
+    try:
+        # 원본 비트 수로 에러 수정
+        recovered_bytes = rs.decode(bits_to_bytes(original_data_bits))
+        recovered_bits = to_bits(recovered_bytes.decode('utf-8', errors='ignore'))
+        return recovered_bits
+    except reedsolo.ReedSolomonError:
+        return None
+
+
 def main():
     # 키 생성
     private_key_file, public_key_file = generate_keys()
@@ -130,42 +154,55 @@ def main():
     if audio.ndim == 2:
         audio = audio[:, 0]
 
-    # 비프 소리와 원본 오디오 결합
-    final_audio = np.concatenate([beep_with_signature, audio])
+    # 노이즈 단계 설정
+    noise_levels = np.linspace(0.01, 0.1, 10)  # 10단계 노이즈 레벨
+    recovery_rates = []
+    recovered_signatures = []
 
-    # 결과 오디오 저장
-    output_audio_file = "watermarked_audio_with_beep.wav"
-    wav.write(output_audio_file, rate, final_audio)
-    print("Signature embedded successfully with beep sound.")
+    for noise_level in noise_levels:
+        # 비프 소리에 노이즈 추가
+        noisy_beep_with_signature = add_noise(beep_with_signature, noise_level)
 
-    # 삽입된 비트 수 계산
-    total_bits = len(combined_bits)
+        # 원본 오디오에 노이즈 추가
+        noisy_audio = add_noise(audio, noise_level)
 
-    # 오디오 파일에서 서명 추출
-    extracted_audio_rate, extracted_audio = wav.read(output_audio_file)
-    beep_samples = len(beep)  # 비프 소리 샘플 수 계산
-    extracted_bits = extract_signature_lsb(extracted_audio[:beep_samples], total_bits, spread_factor=spread_factor)
+        # 비프 소리와 원본 오디오 결합
+        final_audio = np.concatenate([noisy_beep_with_signature, noisy_audio])
 
-    # 추출된 데이터와 서명 분리
-    data_length = len(data_bits)
-    extracted_data_bits = extracted_bits[:data_length]
-    extracted_signature_bits = extracted_bits[data_length:]
+        # 결과 오디오 저장
+        output_audio_file = f"watermarked_audio_with_beep_noise_{noise_level:.2f}.wav"
+        wav.write(output_audio_file, rate, final_audio)
 
-    extracted_data = bits_to_string(extracted_data_bits)
-    extracted_signature = bits_to_bytes(extracted_signature_bits)
+        # 오디오 파일에서 서명 추출
+        extracted_audio_rate, extracted_audio = wav.read(output_audio_file)
+        beep_samples = len(noisy_beep_with_signature)  # 노이즈가 추가된 비프 소리 샘플 수 계산
+        extracted_bits = extract_signature_lsb(extracted_audio[:beep_samples], len(combined_bits),
+                                               spread_factor=spread_factor)
 
-    # 원본 디지털 서명과 추출된 디지털 서명 출력
-    print("Original Signature (hex):", original_signature.hex())
-    print("Extracted Signature (hex):", extracted_signature.hex())
+        # Reed-Solomon으로 서명 복구 시도
+        recovered_bits = recover_signature_with_reed_solomon(extracted_bits, len(combined_bits))
+        if recovered_bits:
+            extracted_data_bits = recovered_bits[:len(data_bits)]
+            extracted_signature_bits = recovered_bits[len(data_bits):]
 
-    # 디지털 서명 검증
-    is_valid = verify_signature(extracted_data, extracted_signature, public_key_file)
-    print("Signature is valid:", is_valid)
+            extracted_data = bits_to_string(extracted_data_bits)
+            extracted_signature = bits_to_bytes(extracted_signature_bits)
 
-    # 추출된 원본 메시지 출력
-    original_message, timestamp = extracted_data.rsplit('|', 1)
-    print("Original Message:", original_message)
-    print("Timestamp:", timestamp)
+            # 디지털 서명 검증
+            is_valid = verify_signature(extracted_data, extracted_signature, public_key_file)
+            recovery_rates.append(int(is_valid))
+        else:
+            recovery_rates.append(0)
+
+    # 결과 시각화
+    plt.figure(figsize=(10, 6))
+    plt.plot(noise_levels, recovery_rates, marker='o', label='Recovery Rate with Noise and RS Code')
+    plt.xlabel('Noise Level')
+    plt.ylabel('Signature Recovery Rate')
+    plt.title('Impact of Noise on Digital Signature Recovery with Reed-Solomon Code')
+    plt.grid(True)
+    plt.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
