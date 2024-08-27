@@ -1,5 +1,5 @@
 # Audio_Deepfake_Detection
 audio_deepfake_detection model
 
-## Coomment
-오디오 딥페이크 탐지 시스템을 개발하기 위한 모델
+## Comment
+금융기관 오디오 전자서명 및 전자서명 기반 딥보이스 탐지 모델 개발
